@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#020617" />
+<title>Subasta de oficina</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html { background: #020617; }
+  .font-display { font-family: 'Fraunces', serif; }
+  .font-body { font-family: 'Manrope', sans-serif; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+  @keyframes pulse-urgent { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+  .urgent { animation: pulse-urgent 0.9s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .urgent { animation: none; } }
+  ::selection { background: #fbbf24; color: #0f172a; }
+  #boot { font-family: 'Manrope', sans-serif; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100">
+<div id="root"></div>
+<div id="boot" class="min-h-screen flex items-center justify-center text-slate-500 text-sm px-6 text-center">
+  Cargando la subasta…
+</div>
+
+<script type="text/babel" data-type="module" data-presets="react">
+// ============================================================================
+//  CONFIGURACIÓN — reemplaza este bloque con el de tu proyecto de Firebase
+//  (Consola de Firebase → Configuración del proyecto → Tus apps → Web)
+// ============================================================================
+const firebaseConfig = {
+  apiKey: "PEGA_TU_API_KEY",
+  authDomain: "PEGA_TU_PROYECTO.firebaseapp.com",
+  projectId: "PEGA_TU_PROYECTO",
+  storageBucket: "PEGA_TU_PROYECTO.appspot.com",
+  messagingSenderId: "PEGA_TU_SENDER_ID",
+  appId: "PEGA_TU_APP_ID",
+};
+
+// Nombre de la colección en Firestore.
+const COLLECTION = "subastas";
+// ============================================================================
+
+import React, { useState, useEffect, useRef, useCallback } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, doc, onSnapshot, runTransaction, setDoc, deleteDoc, getDoc,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  getAuth, signInAnonymously, onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const auth = getAuth(fbApp);
+
+// Sala: permite tener varias subastas en el mismo despliegue con ?sala=loquesea
+const SALA = (new URLSearchParams(location.search).get("sala") || "principal")
+  .toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40) || "principal";
+const auctionRef = doc(db, COLLECTION, SALA);
+const ME_KEY = `subasta-identidad-${SALA}`;
+
+// ---------- helpers ----------
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function nowMs() { return Date.now(); }
+function countActive(activeStatus) {
+  return Object.values(activeStatus).filter((s) => s === "active").length;
+}
+function nextActiveIndex(order, activeStatus, fromIndex) {
+  const n = order.length;
+  for (let step = 1; step <= n; step++) {
+    const idx = (fromIndex + step) % n;
+    if (activeStatus[order[idx]] === "active") return idx;
+  }
+  return null;
+}
+function getMinValid(s) {
+  if (!s) return 0;
+  return s.highestBid != null ? s.highestBid + s.vehicle.increment : s.vehicle.minPrice;
+}
+function fmt(n, currency) {
+  if (n == null) return "—";
+  return `${currency} ${Number(n).toLocaleString("es-CO")}`;
+}
+function timeAgo(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+// Hash del PIN. No es seguridad real (4 dígitos se rompen por fuerza bruta),
+// pero evita que el PIN quede a la vista de cualquiera que abra la consola.
+async function hashPin(pin) {
+  const data = new TextEncoder().encode(`${SALA}:${pin}`);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function loadMe() {
+  try { return JSON.parse(localStorage.getItem(ME_KEY)) || null; } catch (e) { return null; }
+}
+function saveMe(me) {
+  try { localStorage.setItem(ME_KEY, JSON.stringify(me)); } catch (e) {}
+}
+function clearMe() {
+  try { localStorage.removeItem(ME_KEY); } catch (e) {}
+}
+
+// ---------- shared UI bits ----------
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-body">
+      <div className="max-w-md mx-auto px-4 py-6">{children}</div>
+    </div>
+  );
+}
+function Card({ children, className = "" }) {
+  return (
+    <div className={`bg-slate-900 border border-slate-800 rounded-2xl p-5 ${className}`}>
+      {children}
+    </div>
+  );
+}
+function PrimaryButton({ children, onClick, disabled, className = "" }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full bg-amber-400 text-slate-950 font-semibold py-3 rounded-xl
+        hover:bg-amber-300 active:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed
+        focus:outline-none focus:ring-2 focus:ring-amber-300 transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+function GhostButton({ children, onClick, disabled, className = "" }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full border border-slate-700 text-slate-300 font-medium py-3 rounded-xl
+        hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed
+        focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+function DangerButton({ children, onClick, disabled, className = "" }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full border border-red-600 text-red-400 font-medium py-3 rounded-xl
+        hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed
+        focus:outline-none focus:ring-2 focus:ring-red-400 transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+function HowItWorks({ turnDuration }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-xs text-slate-500 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded"
+      >
+        {open ? "Ocultar reglas" : "¿Cómo funciona?"}
+      </button>
+      {open && (
+        <ul className="mt-2 text-xs text-slate-400 space-y-1 list-disc list-inside">
+          <li>El orden de turno se asigna una sola vez, al azar, al iniciar.</li>
+          <li>Cada turno dura {turnDuration || 30} segundos.</li>
+          <li>Para ofertar hay que superar la oferta actual por al menos el incremento mínimo.</li>
+          <li>Quien no oferta en su turno (o se acaba el tiempo) queda eliminado y no vuelve a participar.</li>
+          <li>Gana quien tenga la oferta más alta cuando solo quede una persona activa.</li>
+        </ul>
+      )}
+    </div>
+  );
+}
+function SessionBar({ myName, isHost, onForget }) {
+  return (
+    <div className="mt-6 pt-4 border-t border-slate-900 flex items-center justify-between text-xs text-slate-600">
+      <span className="font-mono">sala: {SALA}</span>
+      <button
+        onClick={onForget}
+        className="underline underline-offset-2 hover:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-600 rounded"
+      >
+        {isHost ? "Salir de organizador" : `No soy ${myName}`}
+      </button>
+    </div>
+  );
+}
+function ConnectionBadge({ online }) {
+  if (online) return null;
+  return (
+    <div className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+      Sin conexión. Los cambios se enviarán cuando vuelva la señal.
+    </div>
+  );
+}
+
+// ---------- Landing ----------
+function Landing({ auctionExists, onChooseHost, onChooseParticipant }) {
+  return (
+    <Shell>
+      <h1 className="font-display text-3xl font-semibold text-amber-400">Subasta de oficina</h1>
+      <p className="text-slate-400 mt-2 mb-8">
+        Subasta ascendente con turnos aleatorios entre compañeros. ¿Cómo vas a entrar?
+      </p>
+      <div className="space-y-3">
+        <PrimaryButton onClick={onChooseHost}>Soy el organizador</PrimaryButton>
+        <GhostButton onClick={onChooseParticipant} disabled={!auctionExists}>Soy participante</GhostButton>
+      </div>
+      {!auctionExists && (
+        <p className="text-xs text-slate-500 mt-6">
+          Aún no se ha creado ninguna subasta en la sala <span className="font-mono">{SALA}</span>.
+        </p>
+      )}
+    </Shell>
+  );
+}
+
+// ---------- Create form ----------
+function CreateForm({ onCreate, onBack, error, busy }) {
+  const [title, setTitle] = useState("");
+  const [subtitle, setSubtitle] = useState("");
+  const [currency, setCurrency] = useState("$");
+  const [minPrice, setMinPrice] = useState("");
+  const [increment, setIncrement] = useState("");
+  const [turnDuration, setTurnDuration] = useState("20");
+  const [hostPin, setHostPin] = useState("");
+  const [namesText, setNamesText] = useState("");
+
+  const nameCount = namesText.split("\n").map((s) => s.trim()).filter(Boolean).length;
+  const roundMinutes = Math.round((nameCount * (Number(turnDuration) || 0)) / 60);
+
+  return (
+    <Shell>
+      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+        ← Volver
+      </button>
+      <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">Crear subasta</h1>
+      <p className="text-slate-400 text-sm mb-5">Configura el vehículo, las reglas y la lista de participantes.</p>
+
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Vehículo</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej: Toyota Corolla 2019"
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Descripción (opcional)</label>
+          <input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="Ej: 85.000 km, único dueño"
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Moneda</label>
+            <input value={currency} onChange={(e) => setCurrency(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Precio mínimo</label>
+            <input type="number" inputMode="numeric" min="0" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="5000000"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Incremento mínimo</label>
+            <input type="number" inputMode="numeric" min="1" value={increment} onChange={(e) => setIncrement(e.target.value)} placeholder="100000"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Segundos por turno</label>
+            <input type="number" inputMode="numeric" min="5" value={turnDuration} onChange={(e) => setTurnDuration(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">PIN del organizador (4 dígitos)</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={4}
+            value={hostPin}
+            onChange={(e) => setHostPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="1234"
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <p className="text-xs text-slate-500 mt-1">
+            Solo quien tenga este PIN puede forzar pases o reiniciar. No lo compartas en el grupo.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Participantes (un nombre por línea)</label>
+          <textarea value={namesText} onChange={(e) => setNamesText(e.target.value)} rows={8}
+            placeholder={"María Gómez\nCarlos Ruiz\nAna Torres\n..."}
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          <p className="text-xs text-slate-500 mt-1">
+            {nameCount} nombres cargados
+            {nameCount > 0 && roundMinutes > 0 && ` · una ronda completa toma ~${roundMinutes} min`}
+          </p>
+        </div>
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+        <PrimaryButton
+          disabled={busy}
+          onClick={() =>
+            onCreate({ title, subtitle, currency, minPrice, increment, turnDuration, hostPin, namesText })
+          }
+        >
+          {busy ? "Creando…" : "Crear subasta"}
+        </PrimaryButton>
+      </div>
+    </Shell>
+  );
+}
+
+// ---------- Host PIN ----------
+function HostPinForm({ onConfirm, onBack, error, busy }) {
+  const [pin, setPin] = useState("");
+  return (
+    <Shell>
+      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+        ← Volver
+      </button>
+      <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">PIN del organizador</h1>
+      <p className="text-slate-400 text-sm mb-5">Escribe el PIN que definiste al crear la subasta.</p>
+      <input
+        type="password"
+        inputMode="numeric"
+        maxLength={4}
+        value={pin}
+        onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+        placeholder="••••"
+        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 mb-4 font-mono text-center text-2xl tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-amber-400"
+      />
+      {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+      <PrimaryButton onClick={() => onConfirm(pin)} disabled={pin.length < 4 || busy}>
+        Entrar como organizador
+      </PrimaryButton>
+    </Shell>
+  );
+}
+
+// ---------- Identify ----------
+function IdentifyForm({ participants, onConfirm, onBack, error }) {
+  const [selected, setSelected] = useState("");
+  return (
+    <Shell>
+      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+        ← Volver
+      </button>
+      <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">¿Quién eres?</h1>
+      <p className="text-slate-400 text-sm mb-5">Elige tu nombre de la lista de participantes.</p>
+      <select
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-amber-400"
+      >
+        <option value="">Selecciona tu nombre…</option>
+        {participants.map((p) => (
+          <option key={p} value={p}>{p}</option>
+        ))}
+      </select>
+      {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+      <PrimaryButton onClick={() => onConfirm(selected)} disabled={!selected}>Entrar</PrimaryButton>
+    </Shell>
+  );
+}
+
+// ---------- Lobby ----------
+function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
+  const shareUrl = `${location.origin}${location.pathname}?sala=${SALA}`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <Shell>
+      <ConnectionBadge online={online} />
+      <p className="text-xs text-amber-400 uppercase tracking-wide mb-1">
+        {isHost ? "Organizador" : `Participante · ${myName}`}
+      </p>
+      <h1 className="font-display text-2xl font-semibold mb-1">{state.vehicle.title}</h1>
+      {state.vehicle.subtitle && <p className="text-slate-400 text-sm mb-4">{state.vehicle.subtitle}</p>}
+
+      <Card className="mb-4">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="text-slate-500 text-xs">Precio mínimo</p>
+            <p className="font-mono text-amber-400 text-lg">{fmt(state.vehicle.minPrice, state.vehicle.currency)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs">Incremento mínimo</p>
+            <p className="font-mono text-lg">{fmt(state.vehicle.increment, state.vehicle.currency)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs">Segundos por turno</p>
+            <p className="font-mono text-lg">{state.vehicle.turnDuration}s</p>
+          </div>
+          <div>
+            <p className="text-slate-500 text-xs">Participantes</p>
+            <p className="font-mono text-lg">{state.participants.length}</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <p className="text-xs text-slate-500 mb-2">Lista de participantes</p>
+        <div className="flex flex-wrap gap-2">
+          {state.participants.map((p) => (
+            <span key={p} className="text-xs bg-slate-800 border border-slate-700 rounded-full px-2 py-1">
+              {p}{p === myName ? " (tú)" : ""}
+            </span>
+          ))}
+        </div>
+      </Card>
+
+      {isHost ? (
+        <div className="space-y-3">
+          <GhostButton
+            onClick={() => {
+              navigator.clipboard?.writeText(shareUrl).then(() => {
+                setCopied(true); setTimeout(() => setCopied(false), 2000);
+              }).catch(() => {});
+            }}
+          >
+            {copied ? "Enlace copiado" : "Copiar enlace para el grupo"}
+          </GhostButton>
+          <PrimaryButton onClick={onStart}>Iniciar subasta y asignar turnos</PrimaryButton>
+          <p className="text-xs text-slate-500 text-center">
+            El orden de turnos se sorteará en este momento.
+          </p>
+          <DangerButton onClick={onReset}>Reiniciar todo</DangerButton>
+        </div>
+      ) : (
+        <Card>
+          <p className="text-slate-300 text-sm">Esperando a que el organizador inicie la subasta…</p>
+        </Card>
+      )}
+      <HowItWorks turnDuration={state.vehicle.turnDuration} />
+      <SessionBar myName={myName} isHost={isHost} onForget={onForget} />
+    </Shell>
+  );
+}
+
+// ---------- Active board ----------
+function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, onBid, onPass, onForcePass, onReset, onForget, actionError, busy, online }) {
+  const turnName = state.order[state.currentIndex];
+  const isMyTurn = turnName === myName;
+  const remaining = state.turnStartedAt != null
+    ? Math.max(0, state.vehicle.turnDuration - Math.floor((nowTick - state.turnStartedAt) / 1000))
+    : state.vehicle.turnDuration;
+  const pct = Math.round((remaining / state.vehicle.turnDuration) * 100);
+  const urgent = remaining <= 10;
+  const minValid = getMinValid(state);
+  const iPassed = state.activeStatus[myName] === "passed";
+
+  return (
+    <Shell>
+      <ConnectionBadge online={online} />
+      <p className="text-xs text-amber-400 uppercase tracking-wide mb-1">
+        {isHost ? "Organizador" : `Participante · ${myName}`}
+      </p>
+      <h1 className="font-display text-2xl font-semibold mb-1">{state.vehicle.title}</h1>
+      {state.vehicle.subtitle && <p className="text-slate-400 text-sm mb-4">{state.vehicle.subtitle}</p>}
+
+      <Card className="mb-4 text-center">
+        <p className="text-xs text-slate-500 mb-1">
+          {state.highestBid != null ? `Oferta más alta · ${state.highestBidder}` : "Aún sin ofertas · precio mínimo"}
+        </p>
+        <p className="font-mono text-4xl font-semibold text-amber-400 tracking-wider">
+          {fmt(state.highestBid != null ? state.highestBid : state.vehicle.minPrice, state.vehicle.currency)}
+        </p>
+      </Card>
+
+      <Card className={`mb-4 ${isMyTurn ? "border-emerald-500" : ""}`}>
+        <div className="flex items-center justify-between mb-2">
+          <p className={`text-sm font-semibold ${isMyTurn ? "text-emerald-400" : "text-slate-300"}`}>
+            {isMyTurn ? "¡Es tu turno!" : `Turno de ${turnName}`}
+          </p>
+          <p className={`font-mono text-xl ${urgent ? "text-red-400 urgent" : "text-slate-200"}`}>{remaining}s</p>
+        </div>
+        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-3">
+          <div
+            className={`h-full ${urgent ? "bg-red-500" : "bg-amber-400"}`}
+            style={{ width: `${pct}%`, transition: "width 1s linear" }}
+          />
+        </div>
+
+        {isMyTurn && (
+          <div className="space-y-2">
+            <label className="text-xs text-slate-400 block">
+              Tu oferta (mínimo válido: {fmt(minValid, state.vehicle.currency)})
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={bidInput}
+              onChange={(e) => setBidInput(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-3 font-mono text-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <PrimaryButton onClick={onBid} disabled={busy} className="bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-slate-950">
+                Ofertar
+              </PrimaryButton>
+              <DangerButton onClick={onPass} disabled={busy}>Pasar</DangerButton>
+            </div>
+          </div>
+        )}
+        {!isMyTurn && iPassed && (
+          <p className="text-xs text-slate-500 mt-1">Ya pasaste, quedaste fuera de esta subasta.</p>
+        )}
+      </Card>
+
+      {actionError && <p className="text-red-400 text-sm mb-3">{actionError}</p>}
+
+      <Card className="mb-4">
+        <p className="text-xs text-slate-500 mb-2">Orden de turnos</p>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {state.order.map((name, idx) => {
+            const st = state.activeStatus[name];
+            const isCurrent = idx === state.currentIndex;
+            const paddle = idx + 1;
+            return (
+              <div
+                key={name}
+                className={`shrink-0 text-center rounded-xl px-3 py-2 border text-xs
+                  ${isCurrent ? "border-amber-400 ring-2 ring-amber-400" : "border-slate-800"}
+                  ${st === "passed" ? "bg-slate-900 text-slate-600 line-through" : "bg-slate-800 text-slate-200"}`}
+              >
+                <div className="font-mono text-amber-400">#{paddle}</div>
+                <div>{name}{name === myName ? " (tú)" : ""}</div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <History history={state.history} currency={state.vehicle.currency} label="Ver historial" />
+
+      {isHost && (
+        <div className="space-y-2">
+          <GhostButton onClick={onForcePass} disabled={busy}>Forzar pase del turno actual</GhostButton>
+          <DangerButton onClick={onReset}>Reiniciar todo</DangerButton>
+        </div>
+      )}
+      <HowItWorks turnDuration={state.vehicle.turnDuration} />
+      <SessionBar myName={myName} isHost={isHost} onForget={onForget} />
+    </Shell>
+  );
+}
+
+// ---------- History ----------
+function History({ history, currency, label }) {
+  return (
+    <details className="mb-4">
+      <summary className="text-xs text-slate-500 cursor-pointer select-none">{label}</summary>
+      <div className="mt-2 space-y-1 max-h-56 overflow-y-auto">
+        {[...history].reverse().map((h, i) => (
+          <p key={i} className="text-xs text-slate-400 font-mono">
+            {timeAgo(h.at)} · {h.type === "bid" && `${h.name} ofertó ${fmt(h.amount, currency)}`}
+            {h.type === "pass" && `${h.name} pasó`}
+            {h.type === "timeout" && `${h.name} se quedó sin tiempo`}
+            {h.type === "forced" && `El organizador pasó el turno de ${h.name}`}
+            {h.type === "start" && "Inicio de la subasta"}
+            {h.type === "created" && "Subasta creada"}
+          </p>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+// ---------- Finished ----------
+function Finished({ state, isHost, myName, onReset, onForget }) {
+  return (
+    <Shell>
+      <h1 className="font-display text-2xl font-semibold mb-4 text-amber-400">Subasta terminada</h1>
+      <Card className="text-center mb-4">
+        {state.winner ? (
+          <>
+            <p className="text-slate-400 text-sm mb-2">{state.vehicle.title}</p>
+            <p className="font-display text-2xl font-semibold text-emerald-400 mb-1">{state.winner.name}</p>
+            <p className="text-slate-400 text-sm mb-2">se lo lleva por</p>
+            <p className="font-mono text-3xl font-semibold text-amber-400">
+              {fmt(state.winner.amount, state.vehicle.currency)}
+            </p>
+          </>
+        ) : (
+          <p className="text-slate-300">Todos los participantes pasaron. No hubo ganador.</p>
+        )}
+      </Card>
+      <History history={state.history} currency={state.vehicle.currency} label="Ver historial completo" />
+      {isHost && <PrimaryButton onClick={onReset}>Crear una nueva subasta</PrimaryButton>}
+      <SessionBar myName={myName} isHost={isHost} onForget={onForget} />
+    </Shell>
+  );
+}
+
+// ---------- Main ----------
+function CarAuction() {
+  const [state, setState] = useState(undefined); // undefined = cargando, null = no existe
+  const [uiMode, setUiMode] = useState("landing"); // landing | create | hostpin | identify
+  const [isHost, setIsHost] = useState(false);
+  const [myName, setMyName] = useState("");
+  const [identityLoaded, setIdentityLoaded] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [fatal, setFatal] = useState("");
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [bidInput, setBidInput] = useState("");
+  const [formError, setFormError] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
+  const firedForTurnRef = useRef(null);
+
+  // ---- auth anónima (las reglas de Firestore exigen sesión) ----
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) setAuthReady(true);
+    });
+    signInAnonymously(auth).catch((e) => {
+      setFatal("No se pudo conectar con Firebase. Revisa que la autenticación anónima esté habilitada.");
+    });
+    return unsub;
+  }, []);
+
+  // ---- suscripción en tiempo real al documento de la subasta ----
+  useEffect(() => {
+    if (!authReady) return;
+    const unsub = onSnapshot(
+      auctionRef,
+      (snap) => setState(snap.exists() ? snap.data() : null),
+      (err) => setFatal("No se pudo leer la subasta. Revisa las reglas de Firestore."),
+    );
+    return unsub;
+  }, [authReady]);
+
+  // ---- reloj local para la cuenta regresiva ----
+  useEffect(() => {
+    const tick = setInterval(() => setNowTick(Date.now()), 1000);
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => { clearInterval(tick); window.removeEventListener("online", up); window.removeEventListener("offline", down); };
+  }, []);
+
+  // ---- identidad persistente ----
+  useEffect(() => {
+    const me = loadMe();
+    if (me) {
+      if (me.isHost) setIsHost(true);
+      else if (me.myName) setMyName(me.myName);
+    }
+    setIdentityLoaded(true);
+  }, []);
+
+  const becomeHost = useCallback(() => {
+    setIsHost(true); setMyName(""); setUiMode("landing");
+    saveMe({ isHost: true, myName: "" });
+  }, []);
+
+  const becomeParticipant = useCallback((name) => {
+    if (!name) return;
+    setMyName(name); setIsHost(false);
+    saveMe({ isHost: false, myName: name });
+  }, []);
+
+  const forgetMe = useCallback(() => {
+    setIsHost(false); setMyName(""); setUiMode("landing"); setActionError("");
+    clearMe();
+  }, []);
+
+  // si la subasta se recreó y mi nombre ya no está en la lista, suelta la identidad
+  useEffect(() => {
+    if (!state || !myName) return;
+    if (!state.participants.includes(myName)) { setMyName(""); clearMe(); }
+  }, [state, myName]);
+
+  // ---- pasar turno (transacción: nadie puede pisar a nadie) ----
+  const handlePass = useCallback(async (reason, expectedTurnStartedAt = null) => {
+    setBusy(true);
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(auctionRef);
+        if (!snap.exists()) return;
+        const fresh = snap.data();
+        if (fresh.status !== "active") return;
+        // si el turno ya avanzó mientras leíamos, no pases al siguiente por error
+        if (expectedTurnStartedAt != null && fresh.turnStartedAt !== expectedTurnStartedAt) return;
+        const turnName = fresh.order[fresh.currentIndex];
+        if (reason === "self" && turnName !== myName) throw new Error("No es tu turno.");
+        const activeStatus = { ...fresh.activeStatus, [turnName]: "passed" };
+        const activeCount = countActive(activeStatus);
+        const entry = { type: reason === "self" ? "pass" : reason, name: turnName, at: nowMs() };
+        const next = { ...fresh, activeStatus, history: [...fresh.history, entry] };
+        if (activeCount === 0) {
+          next.status = "finished"; next.winner = null; next.turnStartedAt = null;
+        } else if (activeCount === 1 && fresh.highestBidder) {
+          next.status = "finished";
+          next.winner = { name: fresh.highestBidder, amount: fresh.highestBid };
+          next.turnStartedAt = null;
+        } else {
+          next.currentIndex = nextActiveIndex(fresh.order, activeStatus, fresh.currentIndex);
+          next.turnStartedAt = nowMs();
+        }
+        tx.set(auctionRef, next);
+      });
+      setActionError("");
+    } catch (e) {
+      setActionError(e.message || "No se pudo pasar el turno. Intenta de nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  }, [myName]);
+
+  // ---- ofertar (transacción) ----
+  const handleBid = useCallback(async () => {
+    const amount = Number(bidInput);
+    setBusy(true);
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(auctionRef);
+        if (!snap.exists()) throw new Error("La subasta ya no existe.");
+        const fresh = snap.data();
+        if (fresh.status !== "active") throw new Error("La subasta no está activa.");
+        const turnName = fresh.order[fresh.currentIndex];
+        if (turnName !== myName) throw new Error("No es tu turno.");
+        const minValid = getMinValid(fresh);
+        if (!amount || amount < minValid) {
+          throw new Error(`La oferta mínima válida es ${fmt(minValid, fresh.vehicle.currency)}.`);
+        }
+        const activeCount = countActive(fresh.activeStatus);
+        const next = {
+          ...fresh,
+          highestBid: amount,
+          highestBidder: myName,
+          history: [...fresh.history, { type: "bid", name: myName, amount, at: nowMs() }],
+        };
+        if (activeCount <= 1) {
+          next.status = "finished";
+          next.winner = { name: myName, amount };
+          next.turnStartedAt = null;
+        } else {
+          next.currentIndex = nextActiveIndex(fresh.order, fresh.activeStatus, fresh.currentIndex);
+          next.turnStartedAt = nowMs();
+        }
+        tx.set(auctionRef, next);
+      });
+      setActionError("");
+      setBidInput("");
+    } catch (e) {
+      setActionError(e.message || "No se pudo registrar la oferta.");
+    } finally {
+      setBusy(false);
+    }
+  }, [bidInput, myName]);
+
+  // ---- oferta mínima precargada cuando llega mi turno ----
+  useEffect(() => {
+    if (state && state.status === "active" && state.order[state.currentIndex] === myName) {
+      setBidInput(String(getMinValid(state)));
+    }
+  }, [state?.currentIndex, state?.highestBid, myName]);
+
+  // ---- tiempo agotado ----
+  // Solo lo dispara la persona del turno; el organizador es respaldo 3s después,
+  // por si esa persona cerró la app. Así no disparan los 35 dispositivos a la vez.
+  useEffect(() => {
+    if (!state || state.status !== "active" || state.turnStartedAt == null) return;
+    const remaining = state.vehicle.turnDuration - Math.floor((nowTick - state.turnStartedAt) / 1000);
+    const turnOwner = state.order[state.currentIndex];
+    const iFire = turnOwner === myName ? remaining <= 0 : isHost && remaining <= -3;
+    if (iFire && firedForTurnRef.current !== state.turnStartedAt) {
+      firedForTurnRef.current = state.turnStartedAt;
+      handlePass("timeout", state.turnStartedAt);
+    }
+  }, [nowTick, state, handlePass, myName, isHost]);
+
+  async function handleCreateAuction(form) {
+    setFormError("");
+    const participants = form.namesText.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (participants.length < 2) { setFormError("Agrega al menos 2 participantes."); return; }
+    if (!form.minPrice || !form.increment) { setFormError("Define el precio mínimo y el incremento mínimo."); return; }
+    if (!/^\d{4}$/.test(form.hostPin || "")) { setFormError("El PIN del organizador debe tener 4 dígitos."); return; }
+    const dupes = participants.filter((p, i) => participants.indexOf(p) !== i);
+    if (dupes.length) { setFormError(`Hay nombres repetidos: ${[...new Set(dupes)].join(", ")}.`); return; }
+
+    setBusy(true);
+    try {
+      const existing = await getDoc(auctionRef);
+      if (existing.exists()) {
+        setFormError(`Ya hay una subasta en la sala "${SALA}". Reiníciala o usa otra sala con ?sala=nombre.`);
+        return;
+      }
+      const activeStatus = {};
+      participants.forEach((p) => (activeStatus[p] = "active"));
+      const initial = {
+        status: "lobby",
+        vehicle: {
+          title: form.title || "Vehículo",
+          subtitle: form.subtitle || "",
+          currency: form.currency || "$",
+          minPrice: Number(form.minPrice) || 0,
+          increment: Number(form.increment) || 1,
+          turnDuration: Number(form.turnDuration) || 30,
+        },
+        hostPinHash: await hashPin(form.hostPin),
+        participants,
+        order: [],
+        activeStatus,
+        currentIndex: null,
+        highestBid: null,
+        highestBidder: null,
+        turnStartedAt: null,
+        history: [{ type: "created", at: nowMs() }],
+        winner: null,
+        createdAt: nowMs(),
+      };
+      await setDoc(auctionRef, initial);
+      becomeHost();
+    } catch (e) {
+      setFormError("No se pudo crear la subasta. Revisa la conexión y las reglas de Firestore.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleStart() {
+    setBusy(true);
+    try {
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(auctionRef);
+        if (!snap.exists()) return;
+        const fresh = snap.data();
+        if (fresh.status !== "lobby") return;
+        tx.set(auctionRef, {
+          ...fresh,
+          status: "active",
+          order: shuffle(fresh.participants),
+          currentIndex: 0,
+          turnStartedAt: nowMs(),
+          history: [...fresh.history, { type: "start", at: nowMs() }],
+        });
+      });
+    } catch (e) {
+      setActionError("No se pudo iniciar la subasta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReset() {
+    if (!window.confirm("¿Reiniciar toda la subasta? Esto borra el progreso actual para todos.")) return;
+    try { await deleteDoc(auctionRef); } catch (e) { setActionError("No se pudo reiniciar."); return; }
+    forgetMe();
+  }
+
+  async function handleHostPin(pin) {
+    setBusy(true);
+    try {
+      const hash = await hashPin(pin);
+      if (state && hash === state.hostPinHash) { setPinError(""); becomeHost(); }
+      else setPinError("PIN incorrecto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- render ----------
+  if (fatal) {
+    return <Shell><Card><p className="text-red-400 text-sm">{fatal}</p></Card></Shell>;
+  }
+  if (!identityLoaded || !authReady || state === undefined) {
+    return <Shell><p className="text-slate-400">Conectando…</p></Shell>;
+  }
+
+  const identified = isHost || !!myName;
+
+  if (!identified) {
+    if (uiMode === "create") {
+      return <CreateForm onCreate={handleCreateAuction} onBack={() => setUiMode("landing")} error={formError} busy={busy} />;
+    }
+    if (uiMode === "hostpin") {
+      if (!state) return <Shell><p className="text-slate-400">Aún no se ha creado la subasta.</p></Shell>;
+      return (
+        <HostPinForm
+          onBack={() => { setPinError(""); setUiMode("landing"); }}
+          error={pinError}
+          busy={busy}
+          onConfirm={handleHostPin}
+        />
+      );
+    }
+    if (uiMode === "identify") {
+      if (!state) return <Shell><p className="text-slate-400">Aún no se ha creado la subasta.</p></Shell>;
+      return (
+        <IdentifyForm
+          participants={state.participants}
+          onBack={() => setUiMode("landing")}
+          onConfirm={becomeParticipant}
+        />
+      );
+    }
+    return (
+      <Landing
+        auctionExists={!!state}
+        onChooseHost={() => setUiMode(state ? "hostpin" : "create")}
+        onChooseParticipant={() => setUiMode("identify")}
+      />
+    );
+  }
+
+  if (state === null) {
+    return (
+      <Shell>
+        <p className="text-slate-400 mb-4">La subasta fue reiniciada.</p>
+        <PrimaryButton onClick={forgetMe}>Volver al inicio</PrimaryButton>
+      </Shell>
+    );
+  }
+
+  if (state.status === "lobby") {
+    return <Lobby state={state} isHost={isHost} myName={myName} onStart={handleStart} onReset={handleReset} onForget={forgetMe} online={online} />;
+  }
+  if (state.status === "active") {
+    return (
+      <ActiveBoard
+        state={state}
+        isHost={isHost}
+        myName={myName}
+        nowTick={nowTick}
+        bidInput={bidInput}
+        setBidInput={setBidInput}
+        onBid={handleBid}
+        onPass={() => handlePass("self")}
+        onForcePass={() => handlePass("forced")}
+        onReset={handleReset}
+        onForget={forgetMe}
+        actionError={actionError}
+        busy={busy}
+        online={online}
+      />
+    );
+  }
+  return <Finished state={state} isHost={isHost} myName={myName} onReset={handleReset} onForget={forgetMe} />;
+}
+
+document.getElementById("boot").remove();
+createRoot(document.getElementById("root")).render(<CarAuction />);
+</script>
+</body>
+</html>
