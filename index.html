@@ -32,18 +32,23 @@
 </div>
 
 <script type="text/babel" data-type="module" data-presets="react">
-// ============================================================================
-//  CONFIGURACIÓN — reemplaza este bloque con el de tu proyecto de Firebase
-//  (Consola de Firebase → Configuración del proyecto → Tus apps → Web)
-// ============================================================================
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "PEGA_TU_API_KEY",
-  authDomain: "PEGA_TU_PROYECTO.firebaseapp.com",
-  projectId: "PEGA_TU_PROYECTO",
-  storageBucket: "PEGA_TU_PROYECTO.appspot.com",
-  messagingSenderId: "PEGA_TU_SENDER_ID",
-  appId: "PEGA_TU_APP_ID",
+  apiKey: "AIzaSyBx5Od4uc596GPSlstZMtIOmunBHk3FmwE",
+  authDomain: "subasta-5dce2.firebaseapp.com",
+  projectId: "subasta-5dce2",
+  storageBucket: "subasta-5dce2.firebasestorage.app",
+  messagingSenderId: "626450804815",
+  appId: "1:626450804815:web:558fbf25e5243e7e3d7a3a"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 
 // Nombre de la colección en Firestore.
 const COLLECTION = "subastas";
