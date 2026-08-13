@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#020617" />
 <title>Subasta de oficina</title>
 
@@ -16,10 +16,8 @@
 <script src="https://cdn.tailwindcss.com"></script>
 
 <!-- ==========================================================================
-  IMPORT MAP  ← ESTO ES LO QUE ARREGLA EL ERROR "react/jsx-runtime".
-  Babel (runtime automático) inyecta un import a "react/jsx-runtime".
-  Este mapa le dice al navegador dónde resolver esos especificadores,
-  garantizando además una sola instancia de React.
+  IMPORT MAP  ← resuelve "react/jsx-runtime" que Babel inyecta al compilar JSX
+  con el runtime automático, y garantiza una sola instancia de React.
 =========================================================================== -->
 <script type="importmap">
 {
@@ -44,6 +42,56 @@
   @media (prefers-reduced-motion: reduce) { .urgent { animation: none; } }
   ::selection { background: #fbbf24; color: #0f172a; }
   #boot { font-family: 'Manrope', sans-serif; }
+
+  /* ============================================================
+     ARREGLOS ESPECÍFICOS PARA MÓVIL
+     ============================================================ */
+
+  /* 1) Altura real de pantalla en móvil.
+     100vh en Chrome/Safari móvil NO descuenta la barra de
+     direcciones que aparece/desaparece al hacer scroll, así que
+     el layout se corta o deja huecos en blanco. dvh (dynamic
+     viewport height) sí se ajusta. Se deja vh como respaldo. */
+  .app-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    box-sizing: border-box;
+  }
+
+  /* 2) Evita el zoom automático de iOS al enfocar un input.
+     iOS Safari hace zoom si el font-size del campo es < 16px. */
+  input, select, textarea {
+    font-size: 16px;
+  }
+
+  /* 3) Quita el retraso de 300ms al tocar y el "doble tap zoom"
+     accidental en botones y elementos interactivos. */
+  button, a, select {
+    touch-action: manipulation;
+  }
+
+  /* 4) Evita que los inputs numéricos con flechitas (spinners)
+     se vean distinto/rotos entre Android y iOS. */
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* 5) Evita que el usuario pueda seleccionar texto sin querer
+     al tocar varias veces seguidas un botón (típico en móvil). */
+  button {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
 </style>
 </head>
 <body class="bg-slate-950 text-slate-100">
@@ -54,11 +102,10 @@
 
 <script type="text/babel" data-type="module" data-presets="react">
 // ============================================================================
-//  CONFIGURACIÓN — reemplaza este bloque con el de tu proyecto de Firebase
-//  (Consola de Firebase → Configuración del proyecto → Tus apps → Web)
+//  CONFIGURACIÓN DE FIREBASE (proyecto: subasta-5dce2)
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBx5Od4uc596GPSlstZMtIOmunBHk3FmwE",
+   apiKey: "AIzaSyBx5Od4uc596GPSlstZMtIOmunBHk3FmwE",
   authDomain: "subasta-5dce2.firebaseapp.com",
   projectId: "subasta-5dce2",
   storageBucket: "subasta-5dce2.firebasestorage.app",
@@ -139,11 +186,36 @@ function saveMe(me) {
 function clearMe() {
   try { localStorage.removeItem(ME_KEY); } catch (e) {}
 }
+// Copia al portapapeles con respaldo para navegadores móviles / in-app
+// (WhatsApp, Instagram, etc.) que no siempre soportan navigator.clipboard.
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) { /* sigue al respaldo */ }
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
 
 // ---------- shared UI bits ----------
 function Shell({ children }) {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-body">
+    <div className="app-shell bg-slate-950 text-slate-100 font-body">
       <div className="max-w-md mx-auto px-4 py-6">{children}</div>
     </div>
   );
@@ -158,6 +230,7 @@ function Card({ children, className = "" }) {
 function PrimaryButton({ children, onClick, disabled, className = "" }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={`w-full bg-amber-400 text-slate-950 font-semibold py-3 rounded-xl
@@ -171,6 +244,7 @@ function PrimaryButton({ children, onClick, disabled, className = "" }) {
 function GhostButton({ children, onClick, disabled, className = "" }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={`w-full border border-slate-700 text-slate-300 font-medium py-3 rounded-xl
@@ -184,6 +258,7 @@ function GhostButton({ children, onClick, disabled, className = "" }) {
 function DangerButton({ children, onClick, disabled, className = "" }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className={`w-full border border-red-600 text-red-400 font-medium py-3 rounded-xl
@@ -199,6 +274,7 @@ function HowItWorks({ turnDuration }) {
   return (
     <div className="mt-4">
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
         className="text-xs text-slate-500 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded"
       >
@@ -221,6 +297,7 @@ function SessionBar({ myName, isHost, onForget }) {
     <div className="mt-6 pt-4 border-t border-slate-900 flex items-center justify-between text-xs text-slate-600">
       <span className="font-mono">sala: {SALA}</span>
       <button
+        type="button"
         onClick={onForget}
         className="underline underline-offset-2 hover:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-600 rounded"
       >
@@ -273,7 +350,7 @@ function CreateForm({ onCreate, onBack, error, busy }) {
   const roundMinutes = Math.round((nameCount * (Number(turnDuration) || 0)) / 60);
   return (
     <Shell>
-      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+      <button type="button" onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
         ← Volver
       </button>
       <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">Crear subasta</h1>
@@ -297,19 +374,19 @@ function CreateForm({ onCreate, onBack, error, busy }) {
           </div>
           <div className="col-span-2">
             <label className="text-xs text-slate-400 mb-1 block">Precio mínimo</label>
-            <input type="number" inputMode="numeric" min="0" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="5000000"
+            <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="5000000"
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Incremento mínimo</label>
-            <input type="number" inputMode="numeric" min="1" value={increment} onChange={(e) => setIncrement(e.target.value)} placeholder="100000"
+            <input type="number" inputMode="numeric" pattern="[0-9]*" min="1" value={increment} onChange={(e) => setIncrement(e.target.value)} placeholder="100000"
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Segundos por turno</label>
-            <input type="number" inputMode="numeric" min="5" value={turnDuration} onChange={(e) => setTurnDuration(e.target.value)}
+            <input type="number" inputMode="numeric" pattern="[0-9]*" min="5" value={turnDuration} onChange={(e) => setTurnDuration(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
           </div>
         </div>
@@ -318,6 +395,7 @@ function CreateForm({ onCreate, onBack, error, busy }) {
           <input
             type="text"
             inputMode="numeric"
+            pattern="[0-9]*"
             maxLength={4}
             value={hostPin}
             onChange={(e) => setHostPin(e.target.value.replace(/\D/g, ""))}
@@ -357,7 +435,7 @@ function HostPinForm({ onConfirm, onBack, error, busy }) {
   const [pin, setPin] = useState("");
   return (
     <Shell>
-      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+      <button type="button" onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
         ← Volver
       </button>
       <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">PIN del organizador</h1>
@@ -365,11 +443,12 @@ function HostPinForm({ onConfirm, onBack, error, busy }) {
       <input
         type="password"
         inputMode="numeric"
+        pattern="[0-9]*"
         maxLength={4}
         value={pin}
         onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
         placeholder="••••"
-        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 mb-4 font-mono text-center text-2xl tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-amber-400"
+        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 mb-4 font-mono text-center text-2xl tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-amber-400"
       />
       {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
       <PrimaryButton onClick={() => onConfirm(pin)} disabled={pin.length < 4 || busy}>
@@ -384,7 +463,7 @@ function IdentifyForm({ participants, onConfirm, onBack, error }) {
   const [selected, setSelected] = useState("");
   return (
     <Shell>
-      <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
+      <button type="button" onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
         ← Volver
       </button>
       <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">¿Quién eres?</h1>
@@ -409,6 +488,7 @@ function IdentifyForm({ participants, onConfirm, onBack, error }) {
 function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
   const shareUrl = `${location.origin}${location.pathname}?sala=${SALA}`;
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   return (
     <Shell>
       <ConnectionBadge online={online} />
@@ -450,14 +530,20 @@ function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
       {isHost ? (
         <div className="space-y-3">
           <GhostButton
-            onClick={() => {
-              navigator.clipboard?.writeText(shareUrl).then(() => {
-                setCopied(true); setTimeout(() => setCopied(false), 2000);
-              }).catch(() => {});
+            onClick={async () => {
+              const ok = await copyToClipboard(shareUrl);
+              if (ok) { setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 2000); }
+              else { setCopyError(true); }
             }}
           >
             {copied ? "Enlace copiado" : "Copiar enlace para el grupo"}
           </GhostButton>
+          {copyError && (
+            <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 break-all">
+              No se pudo copiar automáticamente. Copia este enlace manualmente:
+              <div className="font-mono mt-1 select-all">{shareUrl}</div>
+            </div>
+          )}
           <PrimaryButton onClick={onStart}>Iniciar subasta y asignar turnos</PrimaryButton>
           <p className="text-xs text-slate-500 text-center">
             El orden de turnos se sorteará en este momento.
@@ -498,7 +584,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
         <p className="text-xs text-slate-500 mb-1">
           {state.highestBid != null ? `Oferta más alta · ${state.highestBidder}` : "Aún sin ofertas · precio mínimo"}
         </p>
-        <p className="font-mono text-4xl font-semibold text-amber-400 tracking-wider">
+        <p className="font-mono text-3xl sm:text-4xl font-semibold text-amber-400 tracking-wider break-all">
           {fmt(state.highestBid != null ? state.highestBid : state.vehicle.minPrice, state.vehicle.currency)}
         </p>
       </Card>
@@ -523,6 +609,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
             <input
               type="number"
               inputMode="numeric"
+              pattern="[0-9]*"
               value={bidInput}
               onChange={(e) => setBidInput(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-3 font-mono text-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"
@@ -542,7 +629,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
       {actionError && <p className="text-red-400 text-sm mb-3">{actionError}</p>}
       <Card className="mb-4">
         <p className="text-xs text-slate-500 mb-2">Orden de turnos</p>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1" style={{ WebkitOverflowScrolling: "touch" }}>
           {state.order.map((name, idx) => {
             const st = state.activeStatus[name];
             const isCurrent = idx === state.currentIndex;
@@ -579,7 +666,7 @@ function History({ history, currency, label }) {
   return (
     <details className="mb-4">
       <summary className="text-xs text-slate-500 cursor-pointer select-none">{label}</summary>
-      <div className="mt-2 space-y-1 max-h-56 overflow-y-auto">
+      <div className="mt-2 space-y-1 max-h-56 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
         {[...history].reverse().map((h, i) => (
           <p key={i} className="text-xs text-slate-400 font-mono">
             {timeAgo(h.at)} · {h.type === "bid" && `${h.name} ofertó ${fmt(h.amount, currency)}`}
@@ -606,7 +693,7 @@ function Finished({ state, isHost, myName, onReset, onForget }) {
             <p className="text-slate-400 text-sm mb-2">{state.vehicle.title}</p>
             <p className="font-display text-2xl font-semibold text-emerald-400 mb-1">{state.winner.name}</p>
             <p className="text-slate-400 text-sm mb-2">se lo lleva por</p>
-            <p className="font-mono text-3xl font-semibold text-amber-400">
+            <p className="font-mono text-3xl font-semibold text-amber-400 break-all">
               {fmt(state.winner.amount, state.vehicle.currency)}
             </p>
           </>
@@ -668,7 +755,16 @@ function CarAuction() {
     const down = () => setOnline(false);
     window.addEventListener("online", up);
     window.addEventListener("offline", down);
-    return () => { clearInterval(tick); window.removeEventListener("online", up); window.removeEventListener("offline", down); };
+    // Al volver de segundo plano en móvil, refresca el reloj de inmediato
+    // para que la cuenta regresiva no se quede "congelada" visualmente.
+    const onVisible = () => { if (document.visibilityState === "visible") setNowTick(Date.now()); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(tick);
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // ---- identidad persistente ----
