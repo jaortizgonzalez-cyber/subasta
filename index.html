@@ -6,32 +6,11 @@
 <meta name="theme-color" content="#020617" />
 <title>Subasta de oficina</title>
 
-<!-- Evita el 404 del favicon en la consola -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A8%3C/text%3E%3C/svg%3E" />
-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <script src="https://cdn.tailwindcss.com"></script>
-
-<!-- ==========================================================================
-  IMPORT MAP  ← ESTO ES LO QUE ARREGLA EL ERROR "react/jsx-runtime".
-  Babel (runtime automático) inyecta un import a "react/jsx-runtime".
-  Este mapa le dice al navegador dónde resolver esos especificadores,
-  garantizando además una sola instancia de React.
-=========================================================================== -->
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.3.1",
-    "react/": "https://esm.sh/react@18.3.1/",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "react-dom/": "https://esm.sh/react-dom@18.3.1/"
-  }
-}
-</script>
-
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <style>
@@ -58,20 +37,20 @@
 //  (Consola de Firebase → Configuración del proyecto → Tus apps → Web)
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBx5Od4uc596GPSlstZMtIOmunBHk3FmwE",
-  authDomain: "subasta-5dce2.firebaseapp.com",
-  projectId: "subasta-5dce2",
-  storageBucket: "subasta-5dce2.firebasestorage.app",
-  messagingSenderId: "626450804815",
-  appId: "1:626450804815:web:558fbf25e5243e7e3d7a3a"
+  apiKey: "PEGA_TU_API_KEY",
+  authDomain: "PEGA_TU_PROYECTO.firebaseapp.com",
+  projectId: "PEGA_TU_PROYECTO",
+  storageBucket: "PEGA_TU_PROYECTO.appspot.com",
+  messagingSenderId: "PEGA_TU_SENDER_ID",
+  appId: "PEGA_TU_APP_ID",
 };
+
 // Nombre de la colección en Firestore.
 const COLLECTION = "subastas";
 // ============================================================================
 
-// Especificadores "desnudos" resueltos por el import map de arriba.
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { createRoot } from "react-dom/client";
+import React, { useState, useEffect, useRef, useCallback } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, doc, onSnapshot, runTransaction, setDoc, deleteDoc, getDoc,
@@ -269,8 +248,10 @@ function CreateForm({ onCreate, onBack, error, busy }) {
   const [turnDuration, setTurnDuration] = useState("20");
   const [hostPin, setHostPin] = useState("");
   const [namesText, setNamesText] = useState("");
+
   const nameCount = namesText.split("\n").map((s) => s.trim()).filter(Boolean).length;
   const roundMinutes = Math.round((nameCount * (Number(turnDuration) || 0)) / 60);
+
   return (
     <Shell>
       <button onClick={onBack} className="text-slate-500 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-slate-500 rounded">
@@ -278,6 +259,7 @@ function CreateForm({ onCreate, onBack, error, busy }) {
       </button>
       <h1 className="font-display text-2xl font-semibold text-amber-400 mb-1">Crear subasta</h1>
       <p className="text-slate-400 text-sm mb-5">Configura el vehículo, las reglas y la lista de participantes.</p>
+
       <div className="space-y-4">
         <div>
           <label className="text-xs text-slate-400 mb-1 block">Vehículo</label>
@@ -417,6 +399,7 @@ function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
       </p>
       <h1 className="font-display text-2xl font-semibold mb-1">{state.vehicle.title}</h1>
       {state.vehicle.subtitle && <p className="text-slate-400 text-sm mb-4">{state.vehicle.subtitle}</p>}
+
       <Card className="mb-4">
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
@@ -437,6 +420,7 @@ function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
           </div>
         </div>
       </Card>
+
       <Card className="mb-4">
         <p className="text-xs text-slate-500 mb-2">Lista de participantes</p>
         <div className="flex flex-wrap gap-2">
@@ -447,6 +431,7 @@ function Lobby({ state, isHost, myName, onStart, onReset, onForget, online }) {
           ))}
         </div>
       </Card>
+
       {isHost ? (
         <div className="space-y-3">
           <GhostButton
@@ -486,6 +471,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
   const urgent = remaining <= 10;
   const minValid = getMinValid(state);
   const iPassed = state.activeStatus[myName] === "passed";
+
   return (
     <Shell>
       <ConnectionBadge online={online} />
@@ -494,6 +480,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
       </p>
       <h1 className="font-display text-2xl font-semibold mb-1">{state.vehicle.title}</h1>
       {state.vehicle.subtitle && <p className="text-slate-400 text-sm mb-4">{state.vehicle.subtitle}</p>}
+
       <Card className="mb-4 text-center">
         <p className="text-xs text-slate-500 mb-1">
           {state.highestBid != null ? `Oferta más alta · ${state.highestBidder}` : "Aún sin ofertas · precio mínimo"}
@@ -502,6 +489,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
           {fmt(state.highestBid != null ? state.highestBid : state.vehicle.minPrice, state.vehicle.currency)}
         </p>
       </Card>
+
       <Card className={`mb-4 ${isMyTurn ? "border-emerald-500" : ""}`}>
         <div className="flex items-center justify-between mb-2">
           <p className={`text-sm font-semibold ${isMyTurn ? "text-emerald-400" : "text-slate-300"}`}>
@@ -515,6 +503,7 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
             style={{ width: `${pct}%`, transition: "width 1s linear" }}
           />
         </div>
+
         {isMyTurn && (
           <div className="space-y-2">
             <label className="text-xs text-slate-400 block">
@@ -539,7 +528,9 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
           <p className="text-xs text-slate-500 mt-1">Ya pasaste, quedaste fuera de esta subasta.</p>
         )}
       </Card>
+
       {actionError && <p className="text-red-400 text-sm mb-3">{actionError}</p>}
+
       <Card className="mb-4">
         <p className="text-xs text-slate-500 mb-2">Orden de turnos</p>
         <div className="flex gap-2 overflow-x-auto pb-1">
@@ -561,7 +552,9 @@ function ActiveBoard({ state, isHost, myName, nowTick, bidInput, setBidInput, on
           })}
         </div>
       </Card>
+
       <History history={state.history} currency={state.vehicle.currency} label="Ver historial" />
+
       {isHost && (
         <div className="space-y-2">
           <GhostButton onClick={onForcePass} disabled={busy}>Forzar pase del turno actual</GhostButton>
@@ -685,11 +678,13 @@ function CarAuction() {
     setIsHost(true); setMyName(""); setUiMode("landing");
     saveMe({ isHost: true, myName: "" });
   }, []);
+
   const becomeParticipant = useCallback((name) => {
     if (!name) return;
     setMyName(name); setIsHost(false);
     saveMe({ isHost: false, myName: name });
   }, []);
+
   const forgetMe = useCallback(() => {
     setIsHost(false); setMyName(""); setUiMode("landing"); setActionError("");
     clearMe();
@@ -809,6 +804,7 @@ function CarAuction() {
     if (!/^\d{4}$/.test(form.hostPin || "")) { setFormError("El PIN del organizador debe tener 4 dígitos."); return; }
     const dupes = participants.filter((p, i) => participants.indexOf(p) !== i);
     if (dupes.length) { setFormError(`Hay nombres repetidos: ${[...new Set(dupes)].join(", ")}.`); return; }
+
     setBusy(true);
     try {
       const existing = await getDoc(auctionRef);
@@ -899,6 +895,7 @@ function CarAuction() {
   }
 
   const identified = isHost || !!myName;
+
   if (!identified) {
     if (uiMode === "create") {
       return <CreateForm onCreate={handleCreateAuction} onBack={() => setUiMode("landing")} error={formError} busy={busy} />;
@@ -945,7 +942,6 @@ function CarAuction() {
   if (state.status === "lobby") {
     return <Lobby state={state} isHost={isHost} myName={myName} onStart={handleStart} onReset={handleReset} onForget={forgetMe} online={online} />;
   }
-
   if (state.status === "active") {
     return (
       <ActiveBoard
@@ -966,7 +962,6 @@ function CarAuction() {
       />
     );
   }
-
   return <Finished state={state} isHost={isHost} myName={myName} onReset={handleReset} onForget={forgetMe} />;
 }
 
